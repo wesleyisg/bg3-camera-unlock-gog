@@ -2,8 +2,52 @@
 
 [![version](https://img.shields.io/badge/version-1.0.0-C27B2B)](CHANGELOG.md)
 [![platform](https://img.shields.io/badge/platform-macOS%2012%2B%20·%20Apple%20Silicon-lightgrey)](#requirements)
-[![game build](https://img.shields.io/badge/BG3-4.1.1.7398727-8B2E1F)](#requirements)
+[![game build](https://img.shields.io/badge/BG3-4.1.1.7631656%20(GOG)-8B2E1F)](#requirements)
 [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
+
+> ## GOG fork
+>
+> This is a fork of [stealthfd3s/bg3-camera-unlock](https://github.com/stealthfd3s/bg3-camera-unlock)
+> that makes the **Camera + WASD** flavor work with the **GOG** macOS build of
+> Baldur's Gate 3, version **4.1.1.7631656** (the current GOG build as of
+> October 2026). Tested on an Apple Silicon MacBook running macOS 27.
+>
+> What changed, all in [one commit](gog-4.1.1.7631656.patch):
+>
+> - `src/Patterns.hpp` — the keyboard-movement guard signature now
+>   wildcards the LDRB page offset of the input-mode byte (`0xd70` on Steam
+>   4.1.1.7398727, `0x4c0` on GOG 4.1.1.7631656). The other 14 signatures
+>   matched the GOG build unchanged; `pattern_test` reports 15 × `1 match(es)`.
+> - `src/ModMain.cpp` — Larian's bundle starts the game through a small stub
+>   executable that `posix_spawn`s the real binary with the inherited
+>   environment. The injected library now stays dormant, and reports no
+>   status, when it finds itself inside that stub.
+> - `launcher/main.mm` — the launcher spawns the storefront binary
+>   (`Baldur's Gate 3 GOG`, or `… Steam` if present) directly, also looks in
+>   `/Applications`, `~/Applications` and `~/Games`, and skips the Steam
+>   checks for a GOG build. The Steam path is unchanged but **untested** in
+>   this fork.
+>
+> **Install (GOG):** build it (below) or grab the `.app` from this fork's
+> [Releases](../../releases), drag it to Applications, quit BG3, and launch
+> the game through the app instead of GOG Galaxy. The first launch needs
+> **System Settings → Privacy & Security → Open Anyway**, as described
+> under [Install](#install). No file inside `Baldur's Gate 3.app` is changed.
+>
+> **Build:**
+>
+> ```sh
+> brew install cmake            # Xcode Command Line Tools are also required
+> cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBG3_CAMERA_WITH_WASD=ON
+> cmake --build build --parallel
+> codesign --force --deep --sign - "build/BG3 Camera Unlock (Camera + WASD).app"
+> # optional: verify the signatures against your own copy of the game
+> lipo -thin arm64 "/Applications/Baldur's Gate 3.app/Contents/MacOS/Baldur's Gate 3 GOG" -output /tmp/bg3-arm64
+> ./build/pattern_test /tmp/bg3-arm64
+> ```
+>
+> Everything below is the upstream README, kept as is; where it says
+> "Steam", the GOG build now works the same way.
 
 **Look up. Look down. Get close.** Baldur's Gate 3 on macOS locks the RPG
 camera: the right stick only rotates, zoom is a fixed arm, and the camera
@@ -64,10 +108,11 @@ of `mod.log`. Installing both is fine; run one at a time. See
 
 - **Apple Silicon Mac** (M1 or newer). Intel and Rosetta are not supported.
 - **macOS 12.0** or newer.
-- **Baldur's Gate 3, Steam edition**, build `4.1.1.7398727`.
+- **Baldur's Gate 3**: GOG build `4.1.1.7631656` (this fork), or Steam
+  build `4.1.1.7398727` (upstream; untested in this fork).
 - A controller, a trackpad, or a mouse — any of the three drives the camera.
 
-Not supported or untested: GOG and other non-Steam builds, split-screen,
+Not supported or untested: other game builds, split-screen,
 multiple simultaneous controllers, Photo Mode, and unusual accessibility
 remappings.
 

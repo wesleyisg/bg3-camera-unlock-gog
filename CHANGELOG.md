@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.0-gog.1 — 2026-10-22 (fork)
+
+Support for the GOG macOS build 4.1.1.7631656 (Camera + WASD flavor
+verified in-game). See the "GOG fork" section of the README.
+
+- Patterns: wildcard the LDRB page offset in the
+  `CharacterTask_MoveController` keyboard-mode guard signature.
+- Mod library: stay dormant without reporting a status inside Larian's
+  stub launcher executable.
+- Launcher: spawn `Baldur's Gate 3 GOG` directly, search `/Applications`,
+  skip the Steam checks for a GOG build.
+
 ## [Unreleased]
 
 ## [1.0.0] - 2026-09-03
