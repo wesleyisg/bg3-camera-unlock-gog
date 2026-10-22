@@ -246,6 +246,25 @@ void Initialize() {
         text->size,
         static_cast<unsigned long long>(text->slide));
 
+    // Larian's app bundle starts the game through a small stub executable
+    // (CFBundleExecutable "Baldur's Gate 3") that posix_spawns the
+    // storefront binary next to it ("Baldur's Gate 3 GOG" / Steam) with the
+    // inherited environment, so DYLD_INSERT_LIBRARIES loads this library into
+    // the stub as well. The stub carries no game code; it must stay dormant
+    // and, above all, must not write a status, or the launcher would read the
+    // stub's abort before the real game process gets to report anything.
+    constexpr std::size_t kMinimumGameTextSize = std::size_t{16} << 20;
+    if (text->size < kMinimumGameTextSize) {
+        Log(
+            log,
+            "INFO",
+            "Host executable is far too small to be the game (launcher "
+            "stub); staying dormant and leaving the status to the child");
+        std::fclose(log);
+        gLogFile = nullptr;
+        return;
+    }
+
     const std::span<const std::uint8_t> executableText{
         text->begin,
         text->size,

@@ -1,0 +1,152 @@
+diff --git a/launcher/main.mm b/launcher/main.mm
+index d40f761..9e20f76 100644
+--- a/launcher/main.mm
++++ b/launcher/main.mm
+@@ -264,6 +264,12 @@ bool IsRunningUnderRosetta() {
+         translated == 1;
+ }
+ 
++// The GOG build neither links libsteam_api nor needs the Steam client, so
++// the Steam checks below are skipped for it.
++bool IsGogExecutable(NSString* executablePath) {
++    return [executablePath.lastPathComponent hasSuffix:@" GOG"];
++}
++
+ bool ResolveGameExecutable(NSString* appPath, NSString** executablePath) {
+     NSBundle* bundle = [NSBundle bundleWithPath:appPath];
+     if (bundle == nil ||
+@@ -277,6 +283,21 @@ bool ResolveGameExecutable(NSString* appPath, NSString** executablePath) {
+         return false;
+     }
+ 
++    // Larian ships the bundle with a small stub as CFBundleExecutable that
++    // posix_spawns the storefront-specific binary beside it. Spawning that
++    // binary directly puts DYLD_INSERT_LIBRARIES on the one process that
++    // holds the game code and keeps the mod out of the stub entirely. When no
++    // storefront binary is found the stub is used as before.
++    NSString* macOSDirectory = executable.stringByDeletingLastPathComponent;
++    for (NSString* storefront in @[@"Baldur's Gate 3 GOG", @"Baldur's Gate 3 Steam"]) {
++        NSString* candidate =
++            [macOSDirectory stringByAppendingPathComponent:storefront];
++        if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
++            executable = candidate;
++            break;
++        }
++    }
++
+     if (executablePath != nullptr) {
+         *executablePath = executable;
+     }
+@@ -333,7 +354,7 @@ NSArray<NSString*>* SteamLibraryRoots() {
+ NSString* AskUserForGame() {
+     NSOpenPanel* panel = [NSOpenPanel openPanel];
+     panel.title = @"Locate Baldur's Gate 3";
+-    panel.message = @"Select the original Baldur's Gate 3.app installed by Steam.";
++    panel.message = @"Select the original Baldur's Gate 3.app installed by Steam or GOG.";
+     panel.prompt = @"Select Game";
+     panel.canChooseFiles = YES;
+     panel.canChooseDirectories = NO;
+@@ -350,7 +371,7 @@ NSString* AskUserForGame() {
+     if (!ResolveGameExecutable(selected, nullptr)) {
+         ShowAlert(
+             @"That is not Baldur's Gate 3",
+-            @"Choose the Steam Baldur's Gate 3.app bundle. No files were changed.",
++            @"Choose the Steam or GOG Baldur's Gate 3.app bundle. No files were changed.",
+             NSAlertStyleWarning);
+         return nil;
+     }
+@@ -373,6 +394,18 @@ NSString* FindGameApplication() {
+         AddCandidate(candidates, seen, candidate);
+     }
+ 
++    // GOG (and a manual drag of the Steam bundle) put the app in a plain
++    // Applications folder rather than a Steam library.
++    for (NSString* folder in @[
++             @"/Applications",
++             [@"~/Applications" stringByExpandingTildeInPath],
++             [@"~/Games" stringByExpandingTildeInPath]]) {
++        AddCandidate(
++            candidates,
++            seen,
++            [folder stringByAppendingPathComponent:@"Baldur's Gate 3.app"]);
++    }
++
+     for (NSString* candidate in candidates) {
+         if (ResolveGameExecutable(candidate, nullptr)) {
+             [[NSUserDefaults standardUserDefaults]
+@@ -856,7 +889,12 @@ int main(int argc, const char* argv[]) {
+             return 1;
+         }
+ 
+-        if (!EnsureSteamIsRunning()) {
++        AppendLauncherLog([NSString stringWithFormat:
++            @"Game executable: %@ (%@ build)",
++            gameExecutable,
++            IsGogExecutable(gameExecutable) ? @"GOG" : @"Steam"]);
++
++        if (!IsGogExecutable(gameExecutable) && !EnsureSteamIsRunning()) {
+             ShowAlert(
+                 @"Steam is not running",
+                 @"Start Steam, sign in, then open BG3 Camera Unlock again.",
+diff --git a/src/ModMain.cpp b/src/ModMain.cpp
+index f786207..458f091 100644
+--- a/src/ModMain.cpp
++++ b/src/ModMain.cpp
+@@ -246,6 +246,25 @@ void Initialize() {
+         text->size,
+         static_cast<unsigned long long>(text->slide));
+ 
++    // Larian's app bundle starts the game through a small stub executable
++    // (CFBundleExecutable "Baldur's Gate 3") that posix_spawns the
++    // storefront binary next to it ("Baldur's Gate 3 GOG" / Steam) with the
++    // inherited environment, so DYLD_INSERT_LIBRARIES loads this library into
++    // the stub as well. The stub carries no game code; it must stay dormant
++    // and, above all, must not write a status, or the launcher would read the
++    // stub's abort before the real game process gets to report anything.
++    constexpr std::size_t kMinimumGameTextSize = std::size_t{16} << 20;
++    if (text->size < kMinimumGameTextSize) {
++        Log(
++            log,
++            "INFO",
++            "Host executable is far too small to be the game (launcher "
++            "stub); staying dormant and leaving the status to the child");
++        std::fclose(log);
++        gLogFile = nullptr;
++        return;
++    }
++
+     const std::span<const std::uint8_t> executableText{
+         text->begin,
+         text->size,
+diff --git a/src/Patterns.hpp b/src/Patterns.hpp
+index 3035ee4..6b9b2e8 100644
+--- a/src/Patterns.hpp
++++ b/src/Patterns.hpp
+@@ -347,8 +347,8 @@ inline constexpr std::array<std::uint8_t, 44> kYawFollowRateSiteBytes{
+ // the keyboard path. The surrounding object offsets are pinned to make a game
+ // update fail closed rather than patching an uncertain branch.
+ inline constexpr std::array<std::uint8_t, 40> kKeyboardMovementGuardBytes{
+-    0x08, 0xb7, 0x02, 0xb0,  // adrp x8, input-mode global
+-    0x08, 0xc1, 0x75, 0x39,  // ldrb w8, [x8, #0xd70]
++    0x08, 0xb7, 0x02, 0xd0,  // adrp x8, input-mode global (page wildcarded)
++    0x08, 0xc1, 0x53, 0x39,  // ldrb w8, [x8, #imm] (imm wildcarded, see below)
+     0xe8, 0x16, 0x00, 0x34,  // cbz w8, return false (patched at +8)
+     0x68, 0x36, 0x40, 0xf9,  // ldr x8, [x19, #0x68]
+     0x09, 0x29, 0x41, 0xb9,  // ldr w9, [x8, #0x128]
+@@ -359,8 +359,15 @@ inline constexpr std::array<std::uint8_t, 40> kKeyboardMovementGuardBytes{
+     0xc8, 0x01, 0x00, 0x36,  // tbz w8, #0, ...
+ };
+ 
++// The LDRB immediate after the ADRP is the input-mode byte's offset inside
++// its page, which the linker lays out anew per build: 0xd70 on Steam
++// 4.1.1.7398727, 0x4c0 on GOG 4.1.1.7631656 (where it sits inside the
++// _gCore block). Wildcarding it follows the same rule as every other
++// ADRP+LDR pair in this file; the object offsets 0x68, 0x128, 0xa0 and
++// 0x48 and the cmn sentinel stay pinned, so the site is still identified by
++// what it does rather than where the global happened to land.
+ inline constexpr auto kKeyboardMovementGuardMask =
+-    MakeInstructionMask<10>(std::array<std::size_t, 4>{0, 2, 6, 9});
++    MakeInstructionMask<10>(std::array<std::size_t, 5>{0, 1, 2, 6, 9});
+ 
+ // CameraSystem::UpdateGameCameraBehavior, immediately before the update
+ // selects and reads its rotation input channel:

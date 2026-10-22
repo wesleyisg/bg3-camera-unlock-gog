@@ -347,8 +347,8 @@ inline constexpr std::array<std::uint8_t, 44> kYawFollowRateSiteBytes{
 // the keyboard path. The surrounding object offsets are pinned to make a game
 // update fail closed rather than patching an uncertain branch.
 inline constexpr std::array<std::uint8_t, 40> kKeyboardMovementGuardBytes{
-    0x08, 0xb7, 0x02, 0xb0,  // adrp x8, input-mode global
-    0x08, 0xc1, 0x75, 0x39,  // ldrb w8, [x8, #0xd70]
+    0x08, 0xb7, 0x02, 0xd0,  // adrp x8, input-mode global (page wildcarded)
+    0x08, 0xc1, 0x53, 0x39,  // ldrb w8, [x8, #imm] (imm wildcarded, see below)
     0xe8, 0x16, 0x00, 0x34,  // cbz w8, return false (patched at +8)
     0x68, 0x36, 0x40, 0xf9,  // ldr x8, [x19, #0x68]
     0x09, 0x29, 0x41, 0xb9,  // ldr w9, [x8, #0x128]
@@ -359,8 +359,15 @@ inline constexpr std::array<std::uint8_t, 40> kKeyboardMovementGuardBytes{
     0xc8, 0x01, 0x00, 0x36,  // tbz w8, #0, ...
 };
 
+// The LDRB immediate after the ADRP is the input-mode byte's offset inside
+// its page, which the linker lays out anew per build: 0xd70 on Steam
+// 4.1.1.7398727, 0x4c0 on GOG 4.1.1.7631656 (where it sits inside the
+// _gCore block). Wildcarding it follows the same rule as every other
+// ADRP+LDR pair in this file; the object offsets 0x68, 0x128, 0xa0 and
+// 0x48 and the cmn sentinel stay pinned, so the site is still identified by
+// what it does rather than where the global happened to land.
 inline constexpr auto kKeyboardMovementGuardMask =
-    MakeInstructionMask<10>(std::array<std::size_t, 4>{0, 2, 6, 9});
+    MakeInstructionMask<10>(std::array<std::size_t, 5>{0, 1, 2, 6, 9});
 
 // CameraSystem::UpdateGameCameraBehavior, immediately before the update
 // selects and reads its rotation input channel:

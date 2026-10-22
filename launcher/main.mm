@@ -264,6 +264,12 @@ bool IsRunningUnderRosetta() {
         translated == 1;
 }
 
+// The GOG build neither links libsteam_api nor needs the Steam client, so
+// the Steam checks below are skipped for it.
+bool IsGogExecutable(NSString* executablePath) {
+    return [executablePath.lastPathComponent hasSuffix:@" GOG"];
+}
+
 bool ResolveGameExecutable(NSString* appPath, NSString** executablePath) {
     NSBundle* bundle = [NSBundle bundleWithPath:appPath];
     if (bundle == nil ||
@@ -275,6 +281,21 @@ bool ResolveGameExecutable(NSString* appPath, NSString** executablePath) {
     if (executable.length == 0 ||
         ![[NSFileManager defaultManager] isExecutableFileAtPath:executable]) {
         return false;
+    }
+
+    // Larian ships the bundle with a small stub as CFBundleExecutable that
+    // posix_spawns the storefront-specific binary beside it. Spawning that
+    // binary directly puts DYLD_INSERT_LIBRARIES on the one process that
+    // holds the game code and keeps the mod out of the stub entirely. When no
+    // storefront binary is found the stub is used as before.
+    NSString* macOSDirectory = executable.stringByDeletingLastPathComponent;
+    for (NSString* storefront in @[@"Baldur's Gate 3 GOG", @"Baldur's Gate 3 Steam"]) {
+        NSString* candidate =
+            [macOSDirectory stringByAppendingPathComponent:storefront];
+        if ([[NSFileManager defaultManager] isExecutableFileAtPath:candidate]) {
+            executable = candidate;
+            break;
+        }
     }
 
     if (executablePath != nullptr) {
@@ -333,7 +354,7 @@ NSArray<NSString*>* SteamLibraryRoots() {
 NSString* AskUserForGame() {
     NSOpenPanel* panel = [NSOpenPanel openPanel];
     panel.title = @"Locate Baldur's Gate 3";
-    panel.message = @"Select the original Baldur's Gate 3.app installed by Steam.";
+    panel.message = @"Select the original Baldur's Gate 3.app installed by Steam or GOG.";
     panel.prompt = @"Select Game";
     panel.canChooseFiles = YES;
     panel.canChooseDirectories = NO;
@@ -350,7 +371,7 @@ NSString* AskUserForGame() {
     if (!ResolveGameExecutable(selected, nullptr)) {
         ShowAlert(
             @"That is not Baldur's Gate 3",
-            @"Choose the Steam Baldur's Gate 3.app bundle. No files were changed.",
+            @"Choose the Steam or GOG Baldur's Gate 3.app bundle. No files were changed.",
             NSAlertStyleWarning);
         return nil;
     }
@@ -371,6 +392,18 @@ NSString* FindGameApplication() {
         NSString* candidate = [root stringByAppendingPathComponent:
             @"steamapps/common/Baldurs Gate 3/Baldur's Gate 3.app"];
         AddCandidate(candidates, seen, candidate);
+    }
+
+    // GOG (and a manual drag of the Steam bundle) put the app in a plain
+    // Applications folder rather than a Steam library.
+    for (NSString* folder in @[
+             @"/Applications",
+             [@"~/Applications" stringByExpandingTildeInPath],
+             [@"~/Games" stringByExpandingTildeInPath]]) {
+        AddCandidate(
+            candidates,
+            seen,
+            [folder stringByAppendingPathComponent:@"Baldur's Gate 3.app"]);
     }
 
     for (NSString* candidate in candidates) {
@@ -856,7 +889,12 @@ int main(int argc, const char* argv[]) {
             return 1;
         }
 
-        if (!EnsureSteamIsRunning()) {
+        AppendLauncherLog([NSString stringWithFormat:
+            @"Game executable: %@ (%@ build)",
+            gameExecutable,
+            IsGogExecutable(gameExecutable) ? @"GOG" : @"Steam"]);
+
+        if (!IsGogExecutable(gameExecutable) && !EnsureSteamIsRunning()) {
             ShowAlert(
                 @"Steam is not running",
                 @"Start Steam, sign in, then open BG3 Camera Unlock again.",
